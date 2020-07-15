@@ -5,7 +5,7 @@ library(dplyr)
 library(stringr)
 library(tidyr)
 library(spData)
-
+library(spDataLarge)
 
 vignette(package = "sf")
 vignette("sf1")
@@ -24,7 +24,7 @@ summary(world)
 
 
 
-# begin geocompr: chapitre un, deux, trois ---------------------------------------------
+# begin geocompr: chapitre un, deux ---------------------------------------------
 packageVersion("spData")
 plot(world)
 summary(world["lifeExp"])
@@ -183,7 +183,13 @@ st_area(luxembourg)
 # rasters do not, however, store and report units
 res(new_raster)
 
+#chapter 2 exercises
+#1.
 summary(world$geom)
+#it is a multipolygon, with 177 countries, and crs wgs84
+
+#3.
+#plot nigeria in context
 
 nigeria = world[world$name_long == "Nigeria", ]
 africa = world[world$continent == "Africa", ]
@@ -194,3 +200,137 @@ a = africa[grepl("Nigeri", africa$name_long), ]
 ncentre = st_centroid(a)
 ncentre_num = st_coordinates(ncentre)
 text(x = ncentre_num[, 1], y = ncentre_num[, 2], labels = a$name_long)
+
+#col changes color
+#lwd changes the width of the surround
+#expand BB changes the zoom of the plot, more or less
+
+#4. create an empty rasterlayer object called my_raster with 10 columns and 10 rows
+#assign random values between 0 and 10 to the raster and then plot it
+my_raster <- raster(nrows = 10, ncol = 10
+                    ,vals = runif(100,min=0,max = 10)
+                    )
+plot(my_raster)
+
+#5 Read the raster/nlcd2011.tif file from the spDataLarge package. what kind of info can you get about the properties of this file?
+raster_filepath2 <- system.file("raster/nlcd2011.tif",package = "spDataLarge")
+raster2 <- raster(raster_filepath2)
+
+
+# chapitre trois ----------------------------------------------------------
+dim(world)
+nrow(world)
+ncol(world)
+
+#can drop geometry if needed
+world_df <- st_drop_geometry(world)
+class(world_df)
+
+world[1:6, ] # subset rows by position
+world[, 1:3] # subset columns by position
+world[, c("name_long", "lifeExp")] # subset columns by name
+
+#use logical vector for subsetting geoms
+sel_area = world$area_km2 < 10000
+summary(sel_area)
+
+small_countries = world[sel_area,]
+#also
+small_countries = world[world$area_km2 < 10000,]
+#also
+small_countries = subset(world, area_km2 < 10000)
+
+#select keeps sfc
+world1 = select(world, name_long, pop)
+names(world1)
+world2 = select(world, name_long:pop)
+world2
+world3 = select(world,-subregion,-area_km2)
+world3
+#rename is way faster
+world4 = dplyr::select(world, name_long, population = pop)
+names(world4)
+
+world5 = world[, c("name_long", "pop")] # subset columns by name
+names(world5)[names(world5) == "pop"] = "population" # rename column manually
+
+#return vector
+# create throw-away data frame
+d = data.frame(pop = 1:10, area = 1:10)
+# return data frame object when selecting a single column
+d[, "pop", drop = FALSE] # equivalent to d["pop"]
+select(d, pop)
+# return a vector when selecting a single column
+d[, "pop"]
+pull(d, pop)
+
+#subset sf, return vector
+# data frame object
+world[, "pop"]
+# vector objects
+world$pop
+pull(world, pop)
+
+#pull by row
+slice(world, 3:5)
+
+# Countries with a life expectancy longer than 82 years
+world6 = filter(world, lifeExp > 83)
+plot(world6)
+
+#filter sf
+world7 = world %>%
+  filter(continent == "Asia") %>%
+  dplyr::select(name_long, continent) %>%
+  slice(1:5)
+
+#brutally awful
+world8 = slice(
+  dplyr::select(
+    filter(world, continent == "Asia"),
+    name_long, continent),
+  1:5)
+
+#vector attribute aggregation
+world_agg1 = aggregate(pop ~ continent, FUN = sum, data = world, na.rm = TRUE)
+class(world_agg1)
+
+world_agg2 = aggregate(world["pop"], by = list(world$continent),
+                       FUN = sum, na.rm = TRUE)
+class(world_agg2)
+
+#pleeease do it this way
+world_agg3 = world %>% 
+  group_by(continent) %>% 
+  summarize(pop = sum(pop,na.rm = TRUE))
+
+world %>% 
+  summarize(pop = sum(pop, na.rm = TRUE), n = n())
+
+world %>% 
+  select(pop,continent) %>% 
+  group_by(continent) %>% 
+  summarize(pop = sum(pop,na.rm = TRUE),n_countries = n()) %>% 
+  top_n(3,pop) %>% 
+  arrange(desc(pop)) %>% 
+  st_drop_geometry()
+
+# joins
+world_coffee = left_join(world,coffee_data)
+
+plot(world_coffee["coffee_production_2017"])
+
+coffee_renamed = rename(coffee_data, nm = name_long)
+
+world_coffee2 = left_join(world, coffee_renamed, by = c(name_long = "nm"))
+
+world_coffee_inner = inner_join(world, coffee_data)
+
+nrow(world_coffee_inner)
+
+#find rows that don't match
+#setdiff(A,B) returns the data in A that is not in B
+setdiff(coffee_data$name_long, world$name_long)
+
+str_subset(world$name_long, "Dem*.+Congo")
+
