@@ -109,7 +109,7 @@ polygon_sfc
 st_geometry_type(polygon_sfc)
 
 # sfc MULTILINESTRING
-multilinestring_list1 = list(rbind(c(1, 5), c(4, 4), c(4, 1), c(2, 2), c(3, 2)), 
+multilinestring_list1 = list(rbind(Ac(1, 5), c(4, 4), c(4, 1), c(2, 2), c(3, 2)), 
                              rbind(c(1, 2), c(2, 4)))
 multilinestring1 = st_multilinestring((multilinestring_list1))
 multilinestring_list2 = list(rbind(c(2, 9), c(7, 9), c(5, 6), c(4, 7), c(2, 7)), 
