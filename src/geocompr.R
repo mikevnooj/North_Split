@@ -82,6 +82,7 @@ st_polygon(polygon_with_hole_list)
 ## MULTILINESTRING
 multilinestring_list = list(rbind(c(1, 5), c(4, 4), c(4, 1), c(2, 2), c(3, 2)), 
                             rbind(c(1, 2), c(2, 4)))
+
 st_multilinestring((multilinestring_list))
 
 ## MULTIPOLYGON
@@ -333,4 +334,83 @@ nrow(world_coffee_inner)
 setdiff(coffee_data$name_long, world$name_long)
 
 str_subset(world$name_long, "Dem*.+Congo")
+
+world_new = world
+world_new$pop_dens= world_new$pop / world_new$area_km2
+#can also use dplyr
+world %>% 
+  mutate(pop_dens = pop / area_km2)
+
+world %>% 
+  transmute(pop_dens = pop / area_km2)
+
+world_unite = world %>%
+  unite("con_reg", continent:region_un, sep = ":", remove = TRUE)
+
+world_separate = world_unite %>% 
+  separate(con_reg, c("continent", "region_un"), sep = ":")
+
+world %>% 
+  rename(name = name_long)
+
+new_names = c("i", "n", "c", "r", "s", "t", "a", "p", "l", "gP", "geom")
+
+world %>% 
+  setNames(new_names)
+
+world_data = world %>% st_drop_geometry()
+
+class(world_data)
+
+
+# chapitre quatre ---------------------------------------------------------
+canterbury = nz %>% filter(Name == "Canterbury")
+canterbury_height = nz_height[canterbury, ]
+
+#weirdness
+sel_sgbp = st_intersects(x = nz_height, y = canterbury)
+#create sparse geometry binary predicate
+class(sel_sgbp)
+#convert to logical
+sel_logical = lengths(sel_sgbp) > 0
+#use to subset
+canterbury_height2 = nz_height[sel_logical, ]
+
+
+
+# bullshit ----------------------------------------------------------------
+
+# Load library
+library(sf)
+
+# Create points data
+multipoints <- st_multipoint(matrix(c(10, 10, 15, 20, 30, 30), nrow = 3, byrow = TRUE), dim = "XY")
+multipoints
+points <- st_cast(st_geometry(multipoints), "POINT") 
+points
+route_split_points
+# Number of total linestrings to be created
+n <- length(points) - 1
+
+# Build linestrings
+linestrings <- lapply(X = 1:n, FUN = function(x) {
+  
+  pair <- st_combine(c(points[x], points[x + 1]))
+  line <- st_cast(pair, "LINESTRING")
+  return(line)
+  
+})
+
+# One MULTILINESTRING object with all the LINESTRINGS
+multilinestring <- st_multilinestring(do.call("rbind", linestrings))
+
+# Plot
+plot(multipoints, pch = 19, cex = 2)
+plot(multilinestring[[1]], col = "orange", lwd = 2, add = TRUE)
+plot(multilinestring[[2]], col = "green", lwd = 2, add = TRUE)
+
+plot(st_line_merge(multilinestring))
+
+x <- st_read("data//shape_tmc_usa_in_indy_mpo_1902//shape_tmc_usa_in_indy_mpo_1902.shp")
+x %>% leaflet() %>% addPolylines(popup = ~Tmc)
 
