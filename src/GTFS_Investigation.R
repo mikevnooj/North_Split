@@ -3,6 +3,7 @@
 # indygo
 
 library(sf)
+library(stringr)
 library(data.table)
 library(tidytransit)
 library(ggplot2)
@@ -25,7 +26,7 @@ current_gtfs_sf <- gtfs_as_sf(current_gtfs) %>% set_hms_times %>% set_date_servi
 
 #remove trips with no shapes
 current_gtfs_sf$trips %<>%
-  filter(!trip_id %in% c("1733571","1733576","1733577","1733582","1733585","1733588","1733612","1733613"))
+  filter(!is.na(shape_id))
 
 # match stops to points in shape ------------------------------------------
 #add function
@@ -92,19 +93,20 @@ n <- nrow(shape_endpoints_SB_sf)
 
 SB_shape_list <- lapply(
   X = seq_along_by(1:(n/2),2), function(x){
-    x<-3
+  
     route_segment_start <- route_point_indices[x]
     route_segment_end <- route_point_indices[x+1]
     
     linestring <-  SB_route_point_sf[route_segment_start:route_segment_end,] %>%
       arrange(shape_pt_sequence) %>%
       st_coordinates() %>%
-      st_linestring
+      st_linestring() %>%
+      st_sfc(crs = 4326)
     return(linestring) 
   }
 )
 
-SB_shape_list[[1]] %>%
+SB_shape_list[[3]] %>%
   leaflet() %>% 
   addTiles() %>%
   addPolylines(color = "red", weight = 2)
@@ -116,16 +118,57 @@ SB_90_sf[1,] %>%
   addPolylines(weight = 1) %>%
   addFeatures(SB_route_point_sf, radius = 1,label = ~shape_pt_sequence)
 
-linestring <-  SB_route_point_sf[route_segment_start:route_segment_end,] %>%
+
+# section 2 -- read old gtfs ----------------------------------------------
+#there were some strange errors when reading this in so we are going to do it manually
+old_gtfs <-lapply(paste0("data//GTFS//1806//agency//",dir(path = "data//GTFS//1806//agency")),fread)
+#set the names
+names(old_gtfs) <- dir(path = "data//GTFS//1806//agency") %>%
+  str_remove(".txt")
+
+# gtfs_as_sf(old_gtfs) %>%
+#   .$shapes %>%
+#   right_join(old_gtfs$trips) %>%
+#   right_join(old_gtfs$routes) %>%
+#   leaflet() %>% 
+#   addFeatures(label = ~route_short_name) %>%
+#   addTiles()
+
+#copy so we can sf it
+old_gtfs_sf <- old_gtfs
+
+#sf shapes
+old_gtfs_sf$shapes %<>%
+  st_as_sf(coords = c("shape_pt_lon","shape_pt_lat")
+           ,crs = 4326
+           ) %>%
   group_by(shape_id) %>%
-  summarise(do_union = FALSE)%>%
+  summarize(do_union = FALSE) %>%
   st_cast("LINESTRING")
 
-linestring %>%
-  leaflet() %>% 
-  addTiles() %>%
-  addPolylines(color = "red", weight = 2)
+#sf stops
+old_gtfs_sf$stops %<>%
+  st_as_sf(coords = c("stop_lon","stop_lat")
+           ,crs = 4326) 
 
+#check for trips with no shapes
+old_gtfs_sf$trips %<>%
+  filter(!is.na(shape_id))
+
+old_route_trips_and_shapes_sf <- old_gtfs_sf$shapes %>% 
+  right_join(old_gtfs_sf$trips)%>%
+  right_join(old_gtfs_sf$routes)
+
+#create a stops df for ease of use
+old_stops_sf <- Filter(function(x)!all(is.na(x)),old_gtfs_sf$stops) %>%
+  select(-location_type)
+
+st_nearest_feature(old_stops_sf,SB_shape_list) %>% View()
+
+
+snap_points_to_line
+
+points_align <- st_nearest_points(old_stops_sf,)
 
 # OCT thru FEB
 # 18 + 19 TM.Passcount
