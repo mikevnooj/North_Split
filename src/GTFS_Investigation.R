@@ -106,10 +106,17 @@ SB_shape_list <- lapply(
   }
 )
 
+
+
+SB_shape_segments <- lapply(SB_shape_list,st_as_sf)%>%
+  do.call(rbind,.)%>%
+  select(geometry = x) %>%
+  mutate(lane_type = c("shared-center","bi-directional","none"))
+
 SB_shape_list[[3]] %>%
   leaflet() %>% 
   addTiles() %>%
-  addPolylines(color = "red", weight = 2)
+  addPolylines(color = "red", weight = 3)
 
 
 SB_90_sf[1,] %>% 
@@ -163,12 +170,34 @@ old_route_trips_and_shapes_sf <- old_gtfs_sf$shapes %>%
 old_stops_sf <- Filter(function(x)!all(is.na(x)),old_gtfs_sf$stops) %>%
   select(-location_type)
 
-st_nearest_feature(old_stops_sf,SB_shape_list) %>% View()
+#don't need this i don't think
+#reproject so we can snap
+old_stops_sf_reproj <- old_stops_sf %>%
+  st_transform(7326)
+
+#get nearest stops to the line
+x<-st_nn(SB_shape_segments,old_stops_sf,k = nrow(old_stops_sf),maxdist = 15,returnDist = T)
 
 
-snap_points_to_line
+old_stops_sf[unlist(x$nn),] %>% 
+  leaflet() %>%
+  addFeatures() %>%
+  addTiles()
 
-points_align <- st_nearest_points(old_stops_sf,)
+
+  left_join(old_gtfs_sf$stop_times) %>%
+  left_join(
+    old_route_trips_and_shapes_sf %>% st_drop_geometry() #drop the geometry from the trip shapes
+  )
+
+unlist(x$nn) %>% length()
+st_connect(SB_shape_segments,old_stops_sf,ids = x$nn)%>%
+  leaflet() %>%
+  addFeatures() %>%
+  addTiles()
+
+
+nngeo::
 
 # OCT thru FEB
 # 18 + 19 TM.Passcount
