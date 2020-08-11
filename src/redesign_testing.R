@@ -21,9 +21,9 @@ setwd("C:/Users/Michael.Nugent/Documents/Projects/R_Projects/nooj/North_Split")
 
 # inputs
 #takes lane type, direction
-lane_type <- c("shared-center","bi-directional","none")
+lane_type <- c("shared-center","dedicated","none")
 
-direction <- "SB"
+direction <- "NB"
 
 # functions ---------------------------------------------------------------
 seq_along_by <- function(x, by=1L, from = 1L) (seq_along(x) - 1L) * by + from
@@ -105,6 +105,12 @@ VMH_direction_sf <- VMH_Raw[Inbound_Outbound == fifelse(direction == "SB",1,0)] 
     coords = c("Longitude","Latitude")
     ,crs = 4326
   )
+
+VMH_direction_sf %>% filter(Vehicle_ID == 1996,
+                            Transit_Day == "2019-10-10",
+                            Time > "2019-10-10 12:15:00",
+                            Time < "2019-10-10 17:00:00") %>% View()
+
 #bastard row names
 VMH_direction_sf$rn <- seq_along(1:nrow(VMH_direction_sf))
 
@@ -134,8 +140,6 @@ segment_end_points_sf <- current_stops_sf %>%
     )#end case_when
   )#end mutate
     
-
-
 
 #get 90 and direction shape
 route_shape_sf <- current_route_trips_and_shapes_sf %>%
@@ -230,16 +234,16 @@ old_routes_on_segment <- lapply(old_stops_on_segment,function(x) x %>%
          distinct(as.numeric(route_short_name)))
 
 
-#viz
-old_route_trips_and_shapes_sf %>%
-  group_by(shape_id) %>%
-  slice(1) %>%
-  ungroup() %>%
-  filter(route_short_name %in% old_routes_on_segment) %>%
-  ungroup() %>%
-  leaflet() %>%
-  addFeatures() %>%
-  addTiles()
+# #viz
+# old_route_trips_and_shapes_sf %>%
+#   group_by(shape_id) %>%
+#   slice(1) %>%
+#   ungroup() %>%
+#   filter(route_short_name %in% old_routes_on_segment$`bi-directional`) %>%
+#   ungroup() %>%
+#   leaflet() %>%
+#   addFeatures() %>%
+#   addTiles()
 
 
 # match VMH to SB_shape_segments ------------------------------------------
@@ -281,12 +285,12 @@ closest_VMH %>% lapply(sample_n,10000) %>%
 #let's test gproject
 #this is southbound, so the distance traveled for 9725 should be GREATER than for 1
 #okay so this definitely works
-closest_VMH[[2]] %>%
-  .[c(1,1350),]%>%
-  leaflet() %>%
-  addFeatures() %>%
-  addFeatures(shape_segments[2,])%>%
-  addTiles()
+# closest_VMH[[2]] %>%
+#   .[c(1,1350),]%>%
+#   leaflet() %>%
+#   addFeatures() %>%
+#   addFeatures(shape_segments[2,])%>%
+#   addTiles()
 
 # testpoints_sp <- closest_VMH[[2]] %>% .[c(1,1350),] %>% as_Spatial() %>% spTransform(CRS(st_crs(7328)$proj4string))
 # 
@@ -317,20 +321,166 @@ closest_VMH <- lapply(seq_along(1:length(closest_VMH)),function(i){
 
 
 
-# start of next lapply section --------------------------------------------
+# get DT with speeds --------------------------------------------
+
+# testing here ------------------------------------------------------------
+
 
 VMH_speed_DT <- lapply(seq_along(1:length(closest_VMH)), function(i){
+  
   DT <- data.table(closest_VMH[[i]])
   
   seglen <- gLength(as_Spatial(shape_segments[i,] %>% st_transform(7328)))
   
-  DT <- DT[,.(miles_traveled = max(dist_traveled)/5280 #convert to feet
+  DT <- DT[order(Trip,Vehicle_ID,Transit_Day,Time)
+           ][,`:=` (dist_to_next = c(diff(dist_traveled),0))
+             ,.(Transit_Day,Vehicle_ID,Trip)
+             ][,`:=`(mph = c(NA_real_,diff(dist_traveled)/diff(as.integer(Time))/1.466667)
+                     ,cum_dist = cumsum(abs(dist_to_next)))
+               ,.(Transit_Day,Vehicle_ID,Trip)
+               ][cum_dist < seglen]
+  
+  DT <- DT[,.(miles_traveled = max(cum_dist)/5280 #convert to feet
         ,start_time = min(Time) 
         ,end_time = max(Time))
      ,.(Transit_Day, Trip, Vehicle_ID)
      ][,time := as.numeric((end_time - start_time)/60/60) #convert to hours
        ][,speed := miles_traveled/time #get speed
          ]
+  DT %>% View()
+  return(DT)
+}) %>% `names<-`(shape_segments$lane_type) %>%
+  rbindlist(idcol = T)
+
+VMH_speed_DT$direction <- direction
+
+VMH_speed_DT
+
+fwrite(VMH_speed_DT, file = paste0("data//processed//VMH_speed_",direction))
+fwrite(old_routes_on_segment, file = paste0("data//processed//old_routes_",direction,".csv"))
+
+# start pass count --------------------------------------------------------
+
+pass_count_joined_raw <- fread("data//processed//pass_count_joined.csv")
+
+# add N/S
+pass_count_joined_raw[,direction := case_when(
+                        ROUTE_ABBR %in% c(12,22,13,14) ~ ifelse(ROUTE_DIRECTION_ID==4,0,1),
+                        TRUE ~ ifelse(ROUTE_DIRECTION_ID==6,0,1))]
+
+
+
+#fix stop lat long
+pass_count_joined_raw[,`:=` (
+  LATITUDE = fifelse(
+    test = is.na(LATITUDE)
+    ,Stop_lat/10000000
+    ,LATITUDE/10000000
+  )#end fifelse
+  ,LONGITUDE = fifelse(
+    is.na(LONGITUDE)
+    ,Stop_lon/10000000
+    ,LONGITUDE/10000000
+  )#end fifelse
+)]
+
+pass_count_direction_sf <- pass_count_joined_raw[direction == fifelse(direction == "SB",1,0) &
+                                                   !is.na(LATITUDE) &
+                                                   !is.na(LONGITUDE)] %>%
+  st_as_sf(
+    coords = c("LONGITUDE","LATITUDE")
+    ,crs = 4326
+  )
+
+#bastard row names
+pass_count_direction_sf$rn <- seq_along(1:nrow(passcountdirection))
+
+
+# match pass_count to segments --------------------------------------------
+
+#get coordinate matrices
+pass_count_direction_sf_coords <- do.call(
+  rbind
+  ,st_geometry(pass_count_direction_sf)
+)
+
+closest_pass_count <- lapply(
+  seq_along(1:nrow(shape_segments)), FUN = function(x){
+    nn2(
+      pass_count_direction_sf_coords
+      ,shape_segments[x,] %>% st_segmentize(5) %>% st_coordinates() %>% .[,1:2] #segment coordinate matrix
+      ,k = 10000
+      ,searchtype = "radius"
+      ,radius = 0.00001*(10/1.11)
+    ) %>%
+      sapply(cbind) %>% #combine
+      as_tibble() %>% #convert so we can pull
+      distinct(nn.idx) %>%
+      pull() %>%
+      sort() %>%
+      pass_count_direction_sf[.,]
+  }
+) %>% `names<-`(shape_segments$lane_type)
+
+
+closest_pass_count %>% lapply(sample_n,10000) %>%
+  lapply(function(x){
+    x %>%
+      leaflet() %>%
+      addFeatures() %>%
+      addTiles()
+  })
+
+# let's test gproject
+# this is northbound, so the distance traveled for 1350 should be MORE than for 1
+# okay so this definitely still works
+# closest_pass_count[[1]] %>%
+#   .[c(1,1350),]%>%
+#   leaflet() %>%
+#   addFeatures() %>%
+#   addFeatures(shape_segments[1,])%>%
+#   addTiles()
+# 
+# testpoints_sp <- closest_pass_count[[1]] %>% .[c(1,1350),] %>% as_Spatial() %>% spTransform(CRS(st_crs(7328)$proj4string))
+# 
+# 
+# segment_sp <- as_Spatial(shape_segments[1,]%>% st_transform(7328))
+# 
+# gProject(segment_sp,testpoints_sp)
+
+
+#add distance traveled
+closest_pass_count <- lapply(seq_along(1:length(closest_pass_count)),function(i){
+  
+  pass_count_sp <- closest_pass_count[[i]] %>%
+    as_Spatial() %>% 
+    spTransform(CRS(st_crs(7328)$proj4string))
+  
+  segment_sp <- as_Spatial(shape_segments[i,] %>% st_transform(7328))
+  
+  segment_length <- gLength(segment_sp)
+  
+  shape_dist_traveled <- gProject(segment_sp,pass_count_sp)
+  
+  closest_pass_count[[i]]$dist_traveled <- shape_dist_traveled
+  
+  return(closest_pass_count[[i]])
+}) %>% `names<-`(shape_segments$lane_type)
+
+# get DT with speeds --------------------------------------------
+
+pass_count_speed_DT <- lapply(seq_along(1:length(closest_pass_count)), function(i){
+  DT <- data.table(closest_pass_count[[i]])
+  
+  seglen <- gLength(as_Spatial(shape_segments[i,] %>% st_transform(7328)))
+  
+  DT <- DT[,.(miles_traveled = max(dist_traveled)/5280 #convert to feet
+              ,start_time = min(Time) 
+              ,end_time = max(Time))
+           ,.(Transit_Day, Trip, Vehicle_ID)
+           ][,time := as.numeric((end_time - start_time)/60/60) #convert to hours
+             ][,speed := miles_traveled/time #get speed
+               ]
   return(DT)
 }) %>% `names<-`(shape_segments$lane_type) %>%
   rbindlist(idcol = T)
@@ -338,5 +488,28 @@ VMH_speed_DT <- lapply(seq_along(1:length(closest_VMH)), function(i){
 VMH_speed_DT$direction <- direction
 
 
+i <- 1
+DT <- data.table(closest_VMH[[i]])
+
+DT[DT[,.I[1],.(Transit_Day,Trip,Vehicle_ID)]$V1[1] 
+   ,.(Transit_Day,Trip,Vehicle_ID)]
+
+seglength <- gLength(segment_sp[i])
+
+DT[Transit_Day == "2019-12-06" &
+     Trip == 1855 &
+     Vehicle_ID == 1996] %>%
+  .[order(Time),diff := c(dist_traveled[1],diff(dist_traveled))] %>%
+  .[,cumsum_dist := cumsum(abs(diff))] %>%
+  .[cumsum_dist < seglength]
 
 
+
+
+%>%
+  st_as_sf() %>%
+     leaflet() %>%
+     addFeatures(label = ~paste(dist_traveled,Time)) %>%
+     addTiles()
+
+  

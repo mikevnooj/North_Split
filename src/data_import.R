@@ -11,6 +11,8 @@ library(dplyr)
 con <- DBI::dbConnect(odbc::odbc(), Driver = "SQL Server", Server = "IPTC-TMDATAMART\\TMDATAMART", 
                       Database = "TMDATAMART", Port = 1433)
 
+old_routes_on_rl <- old_routes_on_segment %>% rbindlist(use.names = T) %>% pull() %>% as.character()
+
 # get routes
 ROUTE_raw <- tbl(con,"ROUTE") %>% 
   select(ROUTE_ID, ROUTE_ABBR) %>%
@@ -31,6 +33,7 @@ PASSENGER_COUNT_query_1 <- tbl(
       ,ALIGHT
       ,VEHICLE_ID
       ,TRIP_ID
+      ,BLOCK_STOP_ORDER
       ,PATTERN_ID
       ,RUN_ID
       ,BLOCK_ID
@@ -40,8 +43,8 @@ PASSENGER_COUNT_query_1 <- tbl(
       ,ROUTE_DIRECTION_ID
       ,SCHED_DIST_FROM_LAST_GEO_NODE
       from PASSENGER_COUNT
-      WHERE CALENDAR_ID > 120171231.0
-      and CALENDAR_ID < 120200101.0
+      WHERE CALENDAR_ID > 120171001.0
+      and CALENDAR_ID < 120180228.0
       and REVENUE_ID = 'R'
       and PASSENGER_COUNT.TRIP_ID IS NOT NULL
       and PASSENGER_COUNT.VEHICLE_ID IN (SELECT dbo.SCHEDULE.VEHICLE_ID
@@ -92,7 +95,10 @@ VEHICLE_ID_raw <- tbl(con, "VEHICLE") %>%
   setDT() %>%
   setkey(VEHICLE_ID)
 
-
+ROUTE_DIRECTION_raw <- tbl(con,"ROUTE_DIRECTION") %>%
+  collect() %>%
+  setDT() %>%
+  setkey(ROUTE_DIRECTION_ID)
 
 #join it all to pass_count
 
@@ -108,9 +114,12 @@ pass_count_clean[CALENDAR_raw
                      ][VEHICLE_ID_raw
                        ,on = "VEHICLE_ID"
                        ,names(VEHICLE_ID_raw) := mget(paste0("i.",names(VEHICLE_ID_raw)))
-                       ]
+                       ][ROUTE_DIRECTION_raw
+                         ,on = "ROUTE_DIRECTION_ID"
+                         ,names(ROUTE_DIRECTION_raw) := mget(paste0("i.",names(ROUTE_DIRECTION_raw)))
+                         ]
 
-fwrite(pass_count_clean,"data//processed//pass_count_clean.csv")
+fwrite(pass_count_clean,"data//processed//pass_count_joined.csv")
 
 #grab VMH
 con2 <- DBI::dbConnect(odbc::odbc(), Driver = "SQL Server", Server = "REPSQLP01VW", 
