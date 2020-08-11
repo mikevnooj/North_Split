@@ -229,6 +229,7 @@ old_routes_on_segment <- lapply(old_stops_on_segment,function(x) x %>%
          st_drop_geometry() %>%
          distinct(as.numeric(route_short_name)))
 
+
 #viz
 old_route_trips_and_shapes_sf %>%
   group_by(shape_id) %>%
@@ -314,154 +315,28 @@ closest_VMH <- lapply(seq_along(1:length(closest_VMH)),function(i){
   return(closest_VMH[[i]])
 }) %>% `names<-`(shape_segments$lane_type)
 
-# get VMH closest to stops ------------------------------------------------
-#get rl stops for each segment, to get closest vmh for each stop by trip, day, vehicle
-
-RL_stops <- route_shape_sf %>%
-  st_drop_geometry() %>%
-  left_join(current_gtfs$stop_times) %>%
-  left_join(current_gtfs_sf$stops) %>%
-  select(names(current_gtfs_sf$stops)) %>%
-  st_sf() %>%
-  st_transform(7328)
 
 
-# there be dragons here ---------------------------------------------------
+# start of next lapply section --------------------------------------------
 
-
-yuck <- lapply(seq_along(1:nrow(shape_segments)),function(i){
+VMH_speed_DT <- lapply(seq_along(1:length(closest_VMH)), function(i){
+  DT <- data.table(closest_VMH[[i]])
   
-  shape_buf <- shape_segments[i,] %>%
-    st_transform(7328) %>%
-    st_buffer(35)
-
-  stops <- st_intersects(shape_buf,RL_stops)
+  seglen <- gLength(as_Spatial(shape_segments[i,] %>% st_transform(7328)))
   
-  shape_seg_current_stops <- RL_stops[unlist(stops),]
-  
-  stop_coords <- shape_seg_current_stops %>% st_transform(4326) %>% st_coordinates()
-  
-  closest_VMH_coords <- st_coordinates(closest_VMH[[i]])
-  
-  nn2(
-    closest_VMH_coords
-    ,stop_coords
-    ,searchtype = "radius"
-    ,k = 35000
-    ,radius = 0.00001*(15/1.11)
-  ) %>%
-    sapply(cbind) %>% #combine
-    as_tibble() %>% #convert so we can pull
-    distinct(nn.idx) %>%
-    pull() %>%
-    sort() %>%
-    closest_VMH[[i]][.,]
-  
-    }) %>% `names<-`(shape_segments$lane_type)
+  DT <- DT[,.(miles_traveled = max(dist_traveled)/5280 #convert to feet
+        ,start_time = min(Time) 
+        ,end_time = max(Time))
+     ,.(Transit_Day, Trip, Vehicle_ID)
+     ][,time := as.numeric((end_time - start_time)/60/60) #convert to hours
+       ][,speed := miles_traveled/time #get speed
+         ]
+  return(DT)
+}) %>% `names<-`(shape_segments$lane_type) %>%
+  rbindlist(idcol = T)
 
-
-closest_VMH_closest_to_RL_stops$none %>%
-  data.table() %>%
-  .[Trip == 525] %>% 
-  .[order(Time)] %>%
-  .[,`:=` (dist_to_next = c(diff(dist_traveled),0)
-           ,time_to_next = c(NA_real_,diff(as.integer(Time)))),c("Transit_Day","Vehicle_ID","Trip")] %>%
-  .[, `:=` (fps = dist_to_next/time_to_next),c("Transit_Day","Vehicle_ID","Trip")] %>%
-  .[, `:=` (mph = fps*3600 / 5280, fps = NULL)] %>%
-  .[dist_to_next > 0 & time_to_next > 0] %>%
-  select(mph,dist_traveled,dist_to_next,everything()) %>% 
-  View()
-
-
-closest_VMH[[1]] %>% data.table() %>%
-  #data.table(key = "Transit_Day,Trip,Vehicle_ID") %>%
-  .[,grp := .GRP, by = .(Transit_Day,Trip,Vehicle_ID)] %>%
-  .[]
-
-
-# test --------------------------------------------------------------------
-
-VMH_test <- closest_VMH[[1]] %>% data.table() %>%
-  .[,grp := .GRP, .(Transit_Day,Trip,Vehicle_ID)]
-
-split_list <- VMH_test %>% split(.$grp)
-
-vmh_coords_list <- lapply(split_list, function(x){
-  x %>% st_sf() %>% st_coordinates()
-})
-
-nn2(
-  vmh_coords_list[[1]]
-  ,stop_coords
-  ,searchtype = "radius"
-  ,k = 10
-  ,radius = 0.00001*(50/1.11)
-)
-
-# break ------------------------------------------------------------------
-
-
-indices <- lapply(vmh_coords_list,function(x){
-  nn2(
-    x[[1]] #THIS IS WHAT WE NEED FROM EACH GROUP
-    ,stop_coords
-    ,k = 10
-  ) %>%
-    sapply(cbind) %>% #combine
-    as_tibble() %>% #convert so we can pull
-    distinct(nn.idx) %>%
-    pull() %>%
-    sort()
-})
-
-
-names(split_list) <- NULL
-names(indices) <- NULL
-
-indices 
-
-Map(function(x,y) x[y,],split_list,indices)
-
-
-
-split_list[[1]] %>%
-st_sf() %>%
-leaflet() %>%
-addFeatures() %>%
-addFeatures(RL_stops %>% st_transform(4326),color = "red") %>%
-addTiles()
+VMH_speed_DT$direction <- direction
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-RL_sp <- RL_stops %>%
-  as_Spatial() %>% 
-  spTransform(CRS(st_crs(7328)$proj4string))
-
-segment_sp <- as_Spatial(shape_segments[1,] %>% st_transform(7328))
-
-segment_length <- gLength(segment_sp)
-
-shape_dist_traveled <- gProject(segment_sp,VMH_sp)
-
-closest_VMH[[i]]$dist_traveled <- shape_dist_traveled
