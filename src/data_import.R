@@ -11,6 +11,15 @@ library(dplyr)
 con <- DBI::dbConnect(odbc::odbc(), Driver = "SQL Server", Server = "IPTC-TMDATAMART\\TMDATAMART", 
                       Database = "TMDATAMART", Port = 1433)
 
+
+
+tbl(con,sql("select top 10 * from PASSENGER_COUNT
+            WHERE CALENDAR_ID > 120180210.0
+            AND CALENDAR_ID < 1201802112.0
+            AND VEHICLE_ID IS NOT NULL
+            ORDER BY VEHICLE_ID,MESSAGE_TIME"))
+
+# read in old routes
 old_routes_on_rl <- old_routes_on_segment %>% rbindlist(use.names = T) %>% pull() %>% as.character()
 
 # get routes
@@ -21,27 +30,32 @@ ROUTE_raw <- tbl(con,"ROUTE") %>%
   setDT() %>%
   setkey(ROUTE_ID)
 
+
 #set query
 PASSENGER_COUNT_query_1 <- tbl(
   con
   ,sql(
     paste0(
       "SELECT CALENDAR_ID                                     
+      ,SCHED_DIST_FROM_LAST_GEO_NODE
+      ,BLOCK_STOP_ORDER
+      ,LATITUDE
+      ,LONGITUDE
+      ,MESSAGE_TIME
+      ,ARRIVAL_TIME
+      ,DEPARTURE_TIME
       ,ROUTE_ID                                      
       ,GEO_NODE_ID
       ,BOARD
       ,ALIGHT
       ,VEHICLE_ID
       ,TRIP_ID
-      ,BLOCK_STOP_ORDER
       ,PATTERN_ID
       ,RUN_ID
       ,BLOCK_ID
       ,WORK_PIECE_ID
-      ,LATITUDE
-      ,LONGITUDE
       ,ROUTE_DIRECTION_ID
-      ,SCHED_DIST_FROM_LAST_GEO_NODE
+      
       from PASSENGER_COUNT
       WHERE CALENDAR_ID > 120171001.0
       and CALENDAR_ID < 120180228.0
@@ -61,6 +75,7 @@ PASSENGER_COUNT_query_1 <- tbl(
 
 #read it in
 pass_count_raw <- PASSENGER_COUNT_query_1 %>% collect() %>% setDT()
+
 
 
 #write it so we can save it for later use
@@ -183,9 +198,82 @@ DimRoute90 <- tbl(con3, "DimRoute") %>%
 
 
 VMH_Raw[!Stop_Id == 0 & Alights > 0][Stop_Dwell_Time > 0,.N,Stop_Dwell_Time] %>%
-  sample_n(500) %>% 
+  sample_n(10000) %>% 
   plot()
 
-plot(VMH_Raw$Stop_Dwell_Time,VMH_Raw$Speed)
+
+VMH_Raw <- fread("data//processed//VMH_raw.csv")
+
+VMH_Raw[!Stop_Id == 0 &
+  Speed > 0 & Stop_Dwell_Time > 0
+  ,.(Speed,Stop_Dwell_Time)
+] %>% sample_n(100000) %>%
+  plot()
+
+VMH_Raw[!Stop_Id == 0 &
+  Speed > 0 & Stop_Dwell_Time > 0
+  ,.(Stop_Dwell_Time,Speed)
+  ] %>% sample_n(100000) %>%
+  plot()
+
+
+
+
+
+# testing here ------------------------------------------------------------
+
+
+test_pass_count <- tbl(con,"PASSENGER_COUNT") %>%
+  filter(VEHICLE_ID == 590),
+         CALENDAR_ID == 120171127) %>%
+  # group_by(VEHICLE_ID) %>%
+  # summarise(n()) %>%
+  collect() %>%
+  data.table() %>%
+  .[CALENDAR_raw #join calendar
+    ,on = "CALENDAR_ID"
+    ,names(CALENDAR_raw) := mget(paste0("i.",names(CALENDAR_raw)))
+    ] %>%
+  .[GEO_NODE_raw #join geo_node
+    , on = "GEO_NODE_ID"
+    ,names(GEO_NODE_raw) := mget(paste0("i.",names(GEO_NODE_raw)))
+    ] %>%
+  .[,`:=` (
+    LATITUDE = fifelse( #fix latitude
+      test = is.na(LATITUDE)
+      ,Stop_lat/10000000
+      ,LATITUDE/10000000
+    )#end fifelse
+    ,LONGITUDE = fifelse( #fix longitude
+      is.na(LONGITUDE)
+      ,Stop_lon/10000000
+      ,LONGITUDE/10000000
+    )#end fifelse
+  )]
+
+
+pass_count_joined_raw[is.na(LATITUDE)] %>% View()
+
+test_veh_loc <- tbl(con,"VEHICLE_LOCATION") %>%
+  filter(VEHICLE_ID == 451,
+         CALENDAR_ID == 120171002) %>%
+  collect() %>%
+  data.table() %>%
+  .[,`:=` (
+    LATITUDE = LATITUDE/10000000
+    ,LONGITUDE = LONGITUDE/10000000
+  )] %>%
+  .[CALENDAR_raw
+    ,on = "CALENDAR_ID"
+    ,names(CALENDAR_raw) := mget(paste0("i.",names(CALENDAR_raw)))
+    ]
+
+test_veh_loc %>%
+  st_as_sf(
+    coords = c("LONGITUDE","LATITUDE")
+    ,crs = 4326) %>%
+leaflet() %>%
+addFeatures(label = ~MESSAGE_TIMESTAMP) %>%
+addTiles()
 
 
