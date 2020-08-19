@@ -21,8 +21,7 @@ setwd("C:/Users/Michael.Nugent/Documents/Projects/R_Projects/nooj/North_Split")
 
 # inputs
 #takes lane type, direction
-lane_type <- c("shared-center","dedicated","none")
-
+lane_type <- c("single bi-directional","separated uni-directional","none")
 direction <- "NB"
 
 # functions ---------------------------------------------------------------
@@ -109,7 +108,7 @@ VMH_direction_sf <- VMH_Raw[Inbound_Outbound == fifelse(direction == "SB",1,0)] 
 VMH_direction_sf %>% filter(Vehicle_ID == 1996,
                             Transit_Day == "2019-10-10",
                             Time > "2019-10-10 12:15:00",
-                            Time < "2019-10-10 17:00:00") %>% View()
+                            Time < "2019-10-10 17:00:00")
 
 #bastard row names
 VMH_direction_sf$rn <- seq_along(1:nrow(VMH_direction_sf))
@@ -134,12 +133,13 @@ segment_end_points_sf <- current_stops_sf %>%
   filter(grepl(paste(endpoint_stop_names,collapse = "|"),stop_name)) %>%
   mutate(
     lane_type = case_when(
-      stop_name %like% paste(endpoint_stop_names[1:2],collapse = "|") ~ "shared-center"
-      ,stop_name %like% paste(endpoint_stop_names[3:4],collapse = "|") ~ "bi-directional"
+      stop_name %like% paste(endpoint_stop_names[1:2],collapse = "|") ~ "single bi-directional"
+      ,stop_name %like% paste(endpoint_stop_names[3:4],collapse = "|") ~ "separated uni-directional"
       ,TRUE ~ "none"
     )#end case_when
   )#end mutate
     
+
 
 #get 90 and direction shape
 route_shape_sf <- current_route_trips_and_shapes_sf %>%
@@ -323,38 +323,102 @@ closest_VMH <- lapply(seq_along(1:length(closest_VMH)),function(i){
 
 # get DT with speeds --------------------------------------------
 
-# testing here ------------------------------------------------------------
-
-
 VMH_speed_DT <- lapply(seq_along(1:length(closest_VMH)), function(i){
   
+  #pull in
   DT <- data.table(closest_VMH[[i]])
-  
+  #get seglen
   seglen <- gLength(as_Spatial(shape_segments[i,] %>% st_transform(7328)))
+    #
+  #DT <- 1
+  grp <- quote(list(Trip,Transit_Day,Vehicle_ID))
   
-  DT <- DT[order(Trip,Vehicle_ID,Transit_Day,Time)
-           ][,`:=` (dist_to_next = c(diff(dist_traveled),0))
-             ,.(Transit_Day,Vehicle_ID,Trip)
-             ][,`:=`(mph = c(NA_real_,diff(dist_traveled)/diff(as.integer(Time))/1.466667)
+  #clean DT
+  DT <- DT[
+    #order by trip, then veh_ID, then transit_Day, then Time
+    order(Trip,Vehicle_ID,Transit_Day,Time)
+  
+  ][
+    #remove non BYD
+    Vehicle_ID %in% c(1899,1970:1999)
+  
+  ][
+    #set dist_to_next, resetting at each new group
+    ,`:=` (dist_to_next = c(diff(dist_traveled),0))
+    ,grp
+  
+  ][
+    #set mph for each point to point segment and get cumulative distance traveled, by group
+    ,`:=`(mph = c(NA_real_,diff(dist_traveled)/diff(as.integer(Time))/1.466667)
                      ,cum_dist = cumsum(abs(dist_to_next)))
-               ,.(Transit_Day,Vehicle_ID,Trip)
-               ][cum_dist < seglen]
+               ,grp
   
-  DT <- DT[,.(miles_traveled = max(cum_dist)/5280 #convert to feet
-        ,start_time = min(Time) 
-        ,end_time = max(Time))
-     ,.(Transit_Day, Trip, Vehicle_ID)
-     ][,time := as.numeric((end_time - start_time)/60/60) #convert to hours
-       ][,speed := miles_traveled/time #get speed
-         ]
-  DT %>% View()
+  ][
+    #flag negative
+    ,neg := dist_to_next <= 0
+  
+  ][
+    #create rleid
+    ,rl := rleid(neg),by = grp
+      
+  ][
+    #group by both and get length of each run
+    ,rl_len := .N,.(Trip,Transit_Day,Vehicle_ID,rl)
+        
+  ][
+    #filter rows that have more than 3 and are NEG
+    !(neg == T & rl_len >= 4)
+  ][
+    #redo calcs
+    ,`:=` (dist_to_next = c(diff(dist_traveled),0))
+    ,grp
+  ][
+    ,`:=`(mph = c(NA_real_,diff(dist_traveled)/diff(as.integer(Time))/1.466667)
+         ,cum_dist = cumsum(abs(dist_to_next)))
+    ,grp
+  ][
+    #add cum_dist_flag
+    ,cum_dist_ok := cum_dist <= seglen | cum_dist-seglen < 20
+  ][
+    #filter
+    cum_dist_ok == T
+  ][
+    #do these calcs one more time
+    ,`:=` (dist_to_next = c(diff(dist_traveled),0))
+    ,grp
+  ][
+    ,`:=`(mph = c(NA_real_,diff(dist_traveled)/diff(as.integer(Time))/1.466667)
+          ,cum_dist = cumsum(abs(dist_to_next)))
+    ,grp
+  ]
+
+  
+  DT <- DT[
+    #convert to feet, get min and max time
+    ,.(miles_traveled = max(cum_dist)/5280 #convert to feet
+       ,start_time = min(Time) 
+       ,end_time = max(Time)
+       ,pings = .N)
+    ,grp
+     
+  ][
+    #convert to hours
+    ,time := as.numeric((end_time - start_time)/60/60) #convert to hours
+  ][
+    #convert to speed
+    ,speed := miles_traveled/time #get speed
+  ][
+    #remove records with very low ping #
+    pings >= 10
+  ]
+  
+  
   return(DT)
 }) %>% `names<-`(shape_segments$lane_type) %>%
   rbindlist(idcol = T)
 
 VMH_speed_DT$direction <- direction
 
-VMH_speed_DT
 
 fwrite(VMH_speed_DT, file = paste0("data//processed//VMH_speed_",direction))
 fwrite(old_routes_on_segment, file = paste0("data//processed//old_routes_",direction,".csv"))
@@ -367,6 +431,9 @@ pass_count_joined_raw <- fread("data//processed//pass_count_joined.csv")
 pass_count_joined_raw[,direction := case_when(
                         ROUTE_ABBR %in% c(12,22,13,14) ~ ifelse(ROUTE_DIRECTION_ID==4,0,1),
                         TRUE ~ ifelse(ROUTE_DIRECTION_ID==6,0,1))]
+
+
+
 
 
 
@@ -384,16 +451,20 @@ pass_count_joined_raw[,`:=` (
   )#end fifelse
 )]
 
+
+
+
 pass_count_direction_sf <- pass_count_joined_raw[direction == fifelse(direction == "SB",1,0) &
-                                                   !is.na(LATITUDE) &
-                                                   !is.na(LONGITUDE)] %>%
+                                                   !is.na(LONGITUDE) &
+                                                   !is.na(LATITUDE)] %>%
   st_as_sf(
     coords = c("LONGITUDE","LATITUDE")
     ,crs = 4326
   )
 
+
 #bastard row names
-pass_count_direction_sf$rn <- seq_along(1:nrow(passcountdirection))
+pass_count_direction_sf$rn <- seq_along(1:nrow(pass_count_direction_sf))
 
 
 # match pass_count to segments --------------------------------------------
@@ -431,6 +502,24 @@ closest_pass_count %>% lapply(sample_n,10000) %>%
       addTiles()
   })
 
+closest_pass_count$`shared-center` %>% filter(TRIP_ID == 237042) %>%
+leaflet() %>%
+addFeatures() %>%
+addTiles()
+
+pass_count_direction_sf %>% filter(TRIP_ID == 237042) %>%
+leaflet() %>%
+addFeatures(radius = 1) %>%
+addTiles()
+
+pass_count_joined_raw %>% filter(TRIP_ID == 237042) %>%
+leaflet() %>%
+addCircles() %>%
+addTiles()
+
+pass_count_joined_raw %>% filter(TRIP_ID == 237042) %>%
+  distinct(VEHICLE_ID,CALENDAR_ID)
+                              #& CALENDAR_ID == 120171002)
 # let's test gproject
 # this is northbound, so the distance traveled for 1350 should be MORE than for 1
 # okay so this definitely still works
@@ -470,46 +559,96 @@ closest_pass_count <- lapply(seq_along(1:length(closest_pass_count)),function(i)
 # get DT with speeds --------------------------------------------
 
 pass_count_speed_DT <- lapply(seq_along(1:length(closest_pass_count)), function(i){
+  #pull in
   DT <- data.table(closest_pass_count[[i]])
-  
+  #get seglen
   seglen <- gLength(as_Spatial(shape_segments[i,] %>% st_transform(7328)))
   
-  DT <- DT[,.(miles_traveled = max(dist_traveled)/5280 #convert to feet
-              ,start_time = min(Time) 
-              ,end_time = max(Time))
-           ,.(Transit_Day, Trip, Vehicle_ID)
-           ][,time := as.numeric((end_time - start_time)/60/60) #convert to hours
-             ][,speed := miles_traveled/time #get speed
-               ]
-  return(DT)
+  #DT <- 1
+  grp <- quote(list(TRIP_ID,CALENDAR_DATE,VEHICLE_ID))
+  
+  DT
+  
+  #clean DT
+  DT <- DT[
+    #order by trip, then veh_ID, then transit_Day, then Time
+    order(TRIP_ID,VEHICLE_ID,CALENDAR_DATE,Time)
+    
+    ][
+      #remove non BYD
+      Vehicle_ID %in% c(1899,1970:1999)
+      
+      ][
+        #set dist_to_next, resetting at each new group
+        ,`:=` (dist_to_next = c(diff(dist_traveled),0))
+        ,grp
+        
+        ][
+          #set mph for each point to point segment and get cumulative distance traveled, by group
+          ,`:=`(mph = c(NA_real_,diff(dist_traveled)/diff(as.integer(Time))/1.466667)
+                ,cum_dist = cumsum(abs(dist_to_next)))
+          ,grp
+          
+          ][
+            #flag negative
+            ,neg := dist_to_next <= 0
+            
+            ][
+              #create rleid
+              ,rl := rleid(neg),by = grp
+              
+              ][
+                #group by both and get length of each run
+                ,rl_len := .N,.(Trip,Transit_Day,Vehicle_ID,rl)
+                
+                ][
+                  #filter rows that have more than 3 and are NEG
+                  !(neg == T & rl_len >= 4)
+                  ][
+                    #redo calcs
+                    ,`:=` (dist_to_next = c(diff(dist_traveled),0))
+                    ,grp
+                    ][
+                      ,`:=`(mph = c(NA_real_,diff(dist_traveled)/diff(as.integer(Time))/1.466667)
+                            ,cum_dist = cumsum(abs(dist_to_next)))
+                      ,grp
+                      ][
+                        #add cum_dist_flag
+                        ,cum_dist_ok := cum_dist <= seglen | cum_dist-seglen < 20
+                        ][
+                          #filter
+                          cum_dist_ok == T
+                          ][
+                            #do these calcs one more time
+                            ,`:=` (dist_to_next = c(diff(dist_traveled),0))
+                            ,grp
+                            ][
+                              ,`:=`(mph = c(NA_real_,diff(dist_traveled)/diff(as.integer(Time))/1.466667)
+                                    ,cum_dist = cumsum(abs(dist_to_next)))
+                              ,grp
+                              ]
+  
+  
+  DT <- DT[
+    #convert to feet, get min and max time
+    ,.(miles_traveled = max(cum_dist)/5280 #convert to feet
+       ,start_time = min(Time) 
+       ,end_time = max(Time)
+       ,pings = .N)
+    ,grp
+    
+    ][
+      #convert to hours
+      ,time := as.numeric((end_time - start_time)/60/60) #convert to hours
+      ][
+        #convert to speed
+        ,speed := miles_traveled/time #get speed
+        ][
+          #remove records with very low ping #
+          pings >= 10
+          ]
 }) %>% `names<-`(shape_segments$lane_type) %>%
   rbindlist(idcol = T)
 
 VMH_speed_DT$direction <- direction
 
-
-i <- 1
-DT <- data.table(closest_VMH[[i]])
-
-DT[DT[,.I[1],.(Transit_Day,Trip,Vehicle_ID)]$V1[1] 
-   ,.(Transit_Day,Trip,Vehicle_ID)]
-
-seglength <- gLength(segment_sp[i])
-
-DT[Transit_Day == "2019-12-06" &
-     Trip == 1855 &
-     Vehicle_ID == 1996] %>%
-  .[order(Time),diff := c(dist_traveled[1],diff(dist_traveled))] %>%
-  .[,cumsum_dist := cumsum(abs(diff))] %>%
-  .[cumsum_dist < seglength]
-
-
-
-
-%>%
-  st_as_sf() %>%
-     leaflet() %>%
-     addFeatures(label = ~paste(dist_traveled,Time)) %>%
-     addTiles()
-
-  
