@@ -433,10 +433,6 @@ pass_count_joined_raw[,direction := case_when(
                         TRUE ~ ifelse(ROUTE_DIRECTION_ID==6,0,1))]
 
 
-
-
-
-
 #fix stop lat long
 pass_count_joined_raw[,`:=` (
   LATITUDE = fifelse(
@@ -475,6 +471,7 @@ pass_count_direction_sf_coords <- do.call(
   ,st_geometry(pass_count_direction_sf)
 )
 
+
 closest_pass_count <- lapply(
   seq_along(1:nrow(shape_segments)), FUN = function(x){
     nn2(
@@ -502,7 +499,8 @@ closest_pass_count %>% lapply(sample_n,10000) %>%
       addTiles()
   })
 
-closest_pass_count$`shared-center` %>% filter(TRIP_ID == 237042) %>%
+
+closest_pass_count$`single bi-directional` %>% filter(TRIP_ID == 237042) %>%
 leaflet() %>%
 addFeatures() %>%
 addTiles()
@@ -512,10 +510,6 @@ leaflet() %>%
 addFeatures(radius = 1) %>%
 addTiles()
 
-pass_count_joined_raw %>% filter(TRIP_ID == 237042) %>%
-leaflet() %>%
-addCircles() %>%
-addTiles()
 
 pass_count_joined_raw %>% filter(TRIP_ID == 237042) %>%
   distinct(VEHICLE_ID,CALENDAR_ID)
@@ -556,6 +550,7 @@ closest_pass_count <- lapply(seq_along(1:length(closest_pass_count)),function(i)
   return(closest_pass_count[[i]])
 }) %>% `names<-`(shape_segments$lane_type)
 
+
 # get DT with speeds --------------------------------------------
 
 pass_count_speed_DT <- lapply(seq_along(1:length(closest_pass_count)), function(i){
@@ -567,18 +562,12 @@ pass_count_speed_DT <- lapply(seq_along(1:length(closest_pass_count)), function(
   #DT <- 1
   grp <- quote(list(TRIP_ID,CALENDAR_DATE,VEHICLE_ID))
   
-  DT
-  
   #clean DT
   DT <- DT[
     #order by trip, then veh_ID, then transit_Day, then Time
-    order(TRIP_ID,VEHICLE_ID,CALENDAR_DATE,Time)
+    order(TRIP_ID,VEHICLE_ID,CALENDAR_DATE,MESSAGE_TIME)
     
     ][
-      #remove non BYD
-      Vehicle_ID %in% c(1899,1970:1999)
-      
-      ][
         #set dist_to_next, resetting at each new group
         ,`:=` (dist_to_next = c(diff(dist_traveled),0))
         ,grp
