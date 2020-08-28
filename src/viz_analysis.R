@@ -3,6 +3,7 @@
 #indygo
 library(data.table)
 library(ggplot2)
+library(magrittr)
 library(timeDate)
 library(ggthemes)
 
@@ -42,11 +43,11 @@ VMH_speed_DT_clean <- VMH_speed_DT[speed < Inf &
                                                            ifelse(hms_time >= "15:00" & hms_time < "18:00", "PM","Off-Peak"))
                                        ][
                                          #set service type column
-                                         ,Service_Type := case_when(Transit_Day %in% as_date(holidays_saturday@Data) ~ "Saturday",
-                                                                    Transit_Day %in% as_date(holidays_sunday@Data) ~ "Sunday",
-                                                                    weekdays(Transit_Day) %in% c("Monday","Tuesday","Wednesday","Thursday","Friday")~"Weekday",
+                                         ,Service_Type := dplyr::case_when(Transit_Day %in% as.IDate(holidays_saturday@Data) ~ "Saturday",
+                                                                    Transit_Day %in% as.IDate(holidays_sunday@Data) ~ "Sunday",
+                                                                    weekdays(Transit_Day) %in% c("Monday","Tuesday","Wednesday","Thursday","Friday") ~ "Weekday",
                                                                     TRUE ~ weekdays(Transit_Day))
-                                       ]
+                                       ] 
 VMH_speed_DT_clean[
   ,.(.N
      ,mean=mean(speed)
@@ -82,7 +83,7 @@ VMH_speed_DT_clean %>%
   facet_wrap(~.id) +
   geom_vline(data = direction_medians, aes(xintercept = V1, color = direction))
 
-#same but histograms
+#same but rel freq histograms
 VMH_speed_DT_clean[
   
   ,.N,.(.id,direction,speed = floor(speed))][order(speed) 
@@ -123,8 +124,8 @@ VMH_speed_DT_clean[.id == "single bi-directional"
   ,prop := N/sum(N),.(.id,direction,Peak)
 ] %>%
   ggplot(aes(x=speed, y = prop,color = Peak, fill = Peak)) + 
-  geom_bar(alpha = .3,stat = "identity",position = "identity")+
-  facet_wrap(~direction) + theme_wsj()
+  geom_bar(alpha = .3,stat = "identity",position = "dodge")+
+  facet_wrap(~direction) + theme_tufte()
 
 VMH_speed_DT_clean[.id == "separated uni-directional"
                    ,.N,.(.id,direction,Peak,speed = floor(speed))
@@ -132,8 +133,8 @@ VMH_speed_DT_clean[.id == "separated uni-directional"
                      ,prop := N/sum(N),.(.id,direction,Peak)
                      ] %>%
   ggplot(aes(x=speed, y = prop,color = Peak, fill = Peak)) + 
-  geom_bar(alpha = .3,stat = "identity",position = "identity")+
-  facet_wrap(~direction) + theme_solarized(light = F)
+  geom_bar(alpha = .3,stat = "identity",position = "dodge")+
+  facet_wrap(~direction) + theme_tufte()
 
 
 VMH_speed_DT_clean[.id == "none"
@@ -174,9 +175,5 @@ VMH_speed_DT_clean[
   ,direction
 ]
 
-# [time > quantile(time,probs = .1)
-#          ][speed < quantile(speed,probs = .99)
-#            ][] %>% #clean it up
-#   ggplot(aes(x = speed))+
-#   geom_density()
+
 
