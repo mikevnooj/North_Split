@@ -332,3 +332,9 @@ st_as_sf() %>%
 leaflet() %>%
 addFeatures(label = ~MESSAGE_TIMESTAMP) %>%
 addTiles()
+
+
+# let's find some garbage VMH trips so we can compare them to avail's trip running times speeds ---------------------------------------
+closest_VMH[[1]]
+
+
