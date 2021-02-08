@@ -2,8 +2,6 @@ library(httr)
 library(data.table)
 
 
-
-
 key <- "7ab8a4d70d25d4fa727bf5fe68d7898e"
 startDate <- "08-13-2020"
 endDate <- "08-15-2020"
@@ -42,5 +40,17 @@ fwrite(include_all,"data//swiftly//include_all.csv")
 fwrite(earlies_as_on_time,"data//swiftly//earlies_as_on_time.csv")
 fwrite(ignore_last_stop,"data//swiftly//ignore_last_stop.csv")
 
+route_res <- GET("https://api.goswift.ly/info/indygo/routes"
+                 ,add_headers(Authorization = key)
+                 ,query = list(route = "90"))
 
 
+fread(content(route_res, "text"))
+
+
+speed_map_res <- GET(url = "https://api.goswift.ly/rider-alerts"
+                     ,add_headers(Authorization = key)
+                     ,query = list(agency = "indygo"
+                                   ))
+
+speed_map_res

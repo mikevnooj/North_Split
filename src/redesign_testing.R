@@ -99,6 +99,9 @@ pass_count_raw <- fread("data//processed//pass_count_raw.csv")
 #import VMH
 VMH_Raw <- fread("data//processed//VMH_Raw.csv")
 
+VMH_Raw[,min(Transit_Day)]
+VMH_Raw[,max(Transit_Day)]
+
 VMH_direction_sf <- VMH_Raw[Inbound_Outbound == fifelse(direction == "SB",1,0)] %>%
   st_as_sf(
     coords = c("Longitude","Latitude")
